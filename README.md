@@ -72,13 +72,13 @@ The panel never takes focus, so typing is never stolen. Keys are **opt-in**: pre
 | `shift+←` `shift+→` | Browse earlier side questions |
 | `c` | Copy the answer |
 | `x` | Clear the panel's side-question history |
-| `f` | Branch the conversation here |
+| `f` | Branch the conversation here (`f` for "fork") |
 | `esc` | Leave key mode, then close the panel |
 
 Keys only work while the editor is empty. If you start typing a normal prompt, every key goes to the
 editor — that is deliberate, so a prompt beginning with `f` or `x` is never mistaken for a command.
 
-### Forking
+### Branching
 
 `f` branches the conversation the way Claude Code does: it creates a new session from the current
 position, seeds it with the side question and answer, and **switches you into the branch** in the

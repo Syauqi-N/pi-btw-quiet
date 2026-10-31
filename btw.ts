@@ -438,7 +438,7 @@ class BtwPanel implements Component {
 			? [
 					older > 0 ? `shift+←/→ browse · ${older} earlier /btw` : "↑/↓ to scroll",
 					shown?.answer ? "c copy" : undefined,
-					shown?.answer && !shown.error ? "f fork" : undefined,
+					shown?.answer && !shown.error ? "f branch" : undefined,
 					this.exchanges.length > 0 ? "x clear" : undefined,
 					"esc back to typing",
 				]
@@ -564,7 +564,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		const leafId = ctx.sessionManager.getLeafId();
 		if (!sessionFile || !leafId) {
-			ctx.ui.notify("Cannot fork before the first conversation turn", "warning");
+			ctx.ui.notify("Cannot branch before the first conversation turn", "warning");
 			return;
 		}
 
@@ -576,13 +576,13 @@ export default function btwExtension(pi: ExtensionAPI) {
 		const question = shown.question;
 		const answer = shown.answer;
 
-		ctx.ui.notify("Forking…", "info");
+		ctx.ui.notify("Branching…", "info");
 		try {
 			const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 			const manager = SessionManager.open(sessionFile);
 			const forkedPath = manager.createBranchedSession(leafId);
 			if (!forkedPath) {
-				ctx.ui.notify("Could not fork the conversation", "error");
+				ctx.ui.notify("Could not branch the conversation", "error");
 				return;
 			}
 
@@ -610,7 +610,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 				},
 			});
 		} catch (error) {
-			ctx.ui.notify(`Failed to fork: ${error instanceof Error ? error.message : String(error)}`, "error");
+			ctx.ui.notify(`Failed to branch: ${error instanceof Error ? error.message : String(error)}`, "error");
 		}
 	};
 
