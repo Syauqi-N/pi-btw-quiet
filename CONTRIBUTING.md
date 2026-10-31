@@ -5,8 +5,8 @@ Thanks for taking a look. This is a single-file Pi extension, so the loop is sho
 ## Setup
 
 ```bash
-git clone https://github.com/Syauqi-N/pi-btw
-cd pi-btw
+git clone https://github.com/Syauqi-N/pi-btw-quiet
+cd pi-btw-quiet
 npm install
 ```
 

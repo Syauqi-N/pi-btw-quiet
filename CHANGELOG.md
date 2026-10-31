@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-31
+
+### Changed
+
+- **The side agent can now read the repo.** It runs in its own in-memory `AgentSession` seeded with
+  the main transcript, restricted to `read`, `grep`, `find` and `ls`, instead of a single tool-less
+  model call. This follows the approach of `L2ncE/pi-btw`; see Credits in the README.
+- Side history raised to 10 exchanges and kept per side session.
+- Renamed to `pi-btw-quiet` to avoid colliding with the existing `pi-btw`.
+
+### Fixed
+
+- The side session is disposed on `session_start`, so `/new` and `/resume` no longer answer from a
+  previous session's transcript.
+- Side model switches use `SettingsManager.inMemory()` and never touch the user's `settings.json`.
+
 ## [0.1.0] - 2026-10-31
 
 First public release.
