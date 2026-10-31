@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in /btw does not behave as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please include enough detail to reproduce it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Also tell us what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a long task
+        2. Run /btw <question>
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      description: Output of `pi --version`
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model / provider
+      placeholder: e.g. openai/gpt-5, anthropic/claude-sonnet-4
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Panel rendering / layout
+        - Keyboard handling (keys stolen, esc behaviour)
+        - Side question answer (wrong answer, tool-call markup, empty)
+        - Fork / branch
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Screenshot or terminal output
+      description: Paste text or drag an image here.
+    validations:
+      required: false
