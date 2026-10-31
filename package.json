@@ -1,0 +1,50 @@
+{
+  "name": "pi-btw",
+  "version": "0.1.0",
+  "description": "Ask a side question in Pi without disturbing the running agent — a /btw command modelled on Claude Code.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Syauqi-N",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "btw",
+    "side-question",
+    "coding-agent"
+  ],
+  "pi": {
+    "extensions": [
+      "./btw.ts"
+    ]
+  },
+  "files": [
+    "btw.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Syauqi-N/pi-btw.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Syauqi-N/pi-btw/issues"
+  },
+  "homepage": "https://github.com/Syauqi-N/pi-btw#readme"
+}
