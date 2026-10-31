@@ -9,18 +9,11 @@ whole time.
 
 This is a Pi port of the behaviour of Claude Code's `/btw`, rebuilt against Pi's extension API.
 
-```
-/btw why is this test failing?
-```
+![A /btw side question answered while the main agent is still working](assets/panel.png)
 
-```
-/btw kenapa test ini gagal?
+Press `tab` to use the panel's keys. The hint row tells you which mode you are in:
 
-  Test-nya gagal karena fixture `db` belum di-reset antar spec,
-  jadi baris dari test sebelumnya masih ada saat assertion jalan.
-
-tab to scroll · esc to close · keep typing to talk to the main agent
-```
+![The panel in key mode, showing scroll, copy, branch, clear and close](assets/keys.png)
 
 ## Why
 

@@ -1,7 +1,7 @@
 {
   "name": "pi-btw",
   "version": "0.1.0",
-  "description": "Ask a side question in Pi without disturbing the running agent — a /btw command modelled on Claude Code.",
+  "description": "Ask a side question in Pi without disturbing the running agent \u2014 a /btw command modelled on Claude Code.",
   "type": "module",
   "license": "MIT",
   "author": "Syauqi-N",
@@ -22,7 +22,8 @@
     "btw.ts",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "assets"
   ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
