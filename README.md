@@ -26,12 +26,13 @@ thing that got in the way.
 | Panel keys | active while focused | opt-in with `tab` |
 | Prompt starting with `f` or `x` | can hit a panel command | always reaches the editor |
 | `esc` while the main agent streams | can interrupt the panel | closes only the panel |
+| Pin the side agent's model | ✅ `~/.pi/agent/btw.json` | ✅ same |
 | Branch the conversation | ❌ | ✅ `f` |
-| Side history | 20 exchanges | 10 exchanges |
+| Side history | 20 exchanges | 20 exchanges |
 | License | Apache-2.0 | MIT |
 
-If you like a modal overlay that grabs focus, use theirs — it is more mature and has a larger
-history buffer. This one exists for people who do not want their typing interrupted mid-run.
+If you like a modal overlay that grabs focus, use theirs. This one exists for people who do not
+want their typing interrupted mid-run.
 
 ## Install
 
@@ -61,7 +62,8 @@ Requires Pi with extension support. `@earendil-works/pi-*` packages are supplied
 | `/btw` | Close the panel. Inside a btw branch, jump back to the original session. |
 | `ctrl+shift+b` / `f2` | Close the panel. |
 
-Follow-up `/btw` questions while a panel is open continue the same side thread.
+Follow-up `/btw` questions while a panel is open continue the same side thread. Closing the
+panel mid-answer records the exchange as `stopped` instead of dropping it.
 
 ### Panel keys
 
@@ -88,6 +90,24 @@ or `x` is never mistaken for a command.
 
 Inside a branch, `/btw` with no question returns you to the session you branched from. The branch is
 a normal session, so it also appears in `/resume`.
+
+## Configuration
+
+By default the side agent uses the main session's model and thinking level. To pin a different
+model for `/btw`, create `~/.pi/agent/btw.json`:
+
+```json
+{
+	"model": "openai/gpt-5.2",
+	"thinking": "low"
+}
+```
+
+- `model` — `provider/modelId`, or a bare model id when it is unambiguous across providers
+- `thinking` — optional: `off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`
+- the file is re-read before every ask, so edits apply without a restart
+- an invalid config is reported and the question is dropped; it never silently falls back
+- delete the file (or empty `model`) to follow the main session again
 
 ## What the side agent can do
 

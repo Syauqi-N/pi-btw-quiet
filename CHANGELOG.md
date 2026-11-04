@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-04
+
+### Added
+
+- **Pin the side agent's model** with `~/.pi/agent/btw.json`:
+  `{"model": "openai/gpt-5.2", "thinking": "low"}`. The file is re-read before every ask, so
+  edits apply without a restart. A pinned model is never re-synced to the main session's; omit
+  `model` (or delete the file) to follow the main session again. A broken config is reported and the
+  question is dropped instead of silently falling back to another model.
+- An interrupted side question now shows `stopped` instead of vanishing from the transcript.
+
+### Changed
+
+- Side history raised to 20 exchanges, with the oldest dropped beyond that.
+- `/btw` records an exchange that was stopped mid-answer, so closing the panel early no longer
+  loses the question from the transcript.
+
+### Fixed
+
+- A transcript that fails to seed now warns instead of silently answering with no context at all.
+- `btw.json` containing a JSON array or other non-object value is rejected rather than accepted.
+- A side question that errors no longer leaves the panel spinning on an empty answer.
+
 ## [0.2.0] - 2026-10-31
 
 ### Changed

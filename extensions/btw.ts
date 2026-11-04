@@ -28,6 +28,9 @@
  *   esc                   leave key mode, then close
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
 import {
 	buildSessionContext,
@@ -59,19 +62,90 @@ import {
 const ENTRY_TYPE = "btw";
 const WIDGET_KEY = "btw";
 const BRANCH_PREFIX = "btw:";
-/** How many previous side questions the panel remembers. */
-const MAX_HISTORY = 10;
+/** How many previous side questions the panel remembers before dropping the oldest. */
+const MAX_HISTORY = 20;
 const MAX_PANEL_ROWS = 16;
 /** Read-only tools only: the side agent may look, never touch. */
 const SIDE_TOOLS = ["read", "grep", "find", "ls"];
+/** Optional per-user config for the side agent: `~/.pi/agent/btw.json`. */
+const CONFIG_FILENAME = "btw.json";
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+type BtwThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 interface Exchange {
 	question: string;
 	answer: string;
 	error?: string;
+	/** True when the user stopped the side question with `esc`. */
+	aborted?: boolean;
 	/** Tool the side agent is currently running, shown while it works. */
 	toolName?: string | null;
 }
+
+/**
+ * Which model the side agent should use.
+ *
+ * `configured: false` means "follow the main session". A broken config throws instead of
+ * silently falling back, so a typo in btw.json is reported rather than quietly ignored.
+ */
+type ModelResolution = { configured: false } | { configured: true; model: Model<any>; thinking?: BtwThinkingLevel };
+
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** Read `~/.pi/agent/btw.json`, re-read on every ask so edits apply without a restart. */
+const readModelResolution = (ctx: ExtensionCommandContext): ModelResolution => {
+	const configPath = join(getAgentDir(), CONFIG_FILENAME);
+	let raw: string;
+	try {
+		raw = readFileSync(configPath, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { configured: false };
+		throw new Error(`/btw cannot read ${configPath}: ${errorMessage(error)}`);
+	}
+
+	let config: unknown;
+	try {
+		config = JSON.parse(raw);
+	} catch (error) {
+		throw new Error(`/btw invalid JSON in ${configPath}: ${errorMessage(error)}`);
+	}
+	if (typeof config !== "object" || config === null || Array.isArray(config)) {
+		throw new Error(`/btw ${configPath} must contain a JSON object`);
+	}
+
+	const { model: reference, thinking } = config as { model?: unknown; thinking?: unknown };
+	// An empty or missing `model` means "follow the main session".
+	if (typeof reference !== "string" || reference.length === 0) return { configured: false };
+
+	if (thinking !== undefined) {
+		if (typeof thinking !== "string" || !THINKING_LEVELS.includes(thinking as BtwThinkingLevel)) {
+			throw new Error(`/btw invalid "thinking" in ${configPath}: expected one of ${THINKING_LEVELS.join(", ")}`);
+		}
+	}
+
+	const registry = ctx.modelRegistry;
+	let model: Model<any> | undefined;
+	if (reference.includes("/")) {
+		const slash = reference.indexOf("/");
+		model = registry.find(reference.slice(0, slash), reference.slice(slash + 1));
+	} else {
+		const matches = registry.getAll().filter((candidate) => candidate.id === reference);
+		if (matches.length > 1) {
+			throw new Error(`/btw ambiguous model id "${reference}" in ${configPath}, use provider/modelId`);
+		}
+		model = matches[0];
+	}
+	if (!model) throw new Error(`/btw unknown model "${reference}" in ${configPath}`);
+	if (!registry.hasConfiguredAuth(model)) {
+		throw new Error(`/btw no API key for ${model.provider}/${model.id}`);
+	}
+
+	return {
+		configured: true,
+		model,
+		thinking: typeof thinking === "string" ? (thinking as BtwThinkingLevel) : undefined,
+	};
+};
 
 interface BtwEntryData {
 	model: string;
@@ -105,13 +179,18 @@ const createSideResourceLoader = (ctx: ExtensionCommandContext): ResourceLoader 
 	});
 };
 
-/** Main-session transcript projected onto plain model messages. */
-const seedMessages = (ctx: ExtensionContext): Message[] => {
+/**
+ * Main-session transcript projected onto plain model messages.
+ *
+ * `failure` is set when the transcript could not be read. The caller reports it: an empty
+ * seed would otherwise be indistinguishable from "the side agent has no context".
+ */
+const seedMessages = (ctx: ExtensionContext): { messages: Message[]; failure?: string } => {
 	try {
 		const context = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
-		return convertToLlm(context.messages);
-	} catch {
-		return [];
+		return { messages: convertToLlm(context.messages) };
+	} catch (error) {
+		return { messages: [], failure: errorMessage(error) };
 	}
 };
 
@@ -120,6 +199,11 @@ const textOf = (message: AssistantMessage): string =>
 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
 		.map((part) => part.text)
 		.join("");
+
+/** Keep only the newest exchanges, so a long side thread cannot grow without bound. */
+const capHistory = (exchanges: Exchange[]): void => {
+	if (exchanges.length > MAX_HISTORY) exchanges.splice(0, exchanges.length - MAX_HISTORY);
+};
 
 /**
  * Detect and strip tool calls written as *text*.
@@ -198,6 +282,11 @@ const answerRows = (theme: Theme, exchange: Exchange, width: number, busy: boole
 		}
 	} else if (busy) {
 		rows.push(paint(theme, `  ${theme.fg("dim", exchange.toolName ? `running ${exchange.toolName}…` : "…")}`));
+	}
+	if (exchange.aborted) {
+		for (const line of wrapTextWithAnsi("stopped", textWidth)) {
+			rows.push(paint(theme, `  ${theme.fg("dim", line)}`));
+		}
 	}
 	if (exchange.error) {
 		for (const line of wrapTextWithAnsi(exchange.error, textWidth)) {
@@ -399,7 +488,14 @@ export default function btwExtension(pi: ExtensionAPI) {
 		// Stop whatever the side session is doing; the main agent is unaffected.
 		void sideSession?.abort();
 
-		const exchanges = current.exchanges.filter((e) => e.answer.trim() || e.error);
+		// Closing mid-answer stops the side agent, so record that exchange as stopped. The
+		// in-flight `ask()` cannot do it: the panel is already gone by the time it resolves.
+		const inflight = current.exchanges[current.exchanges.length - 1];
+		if (inflight && !inflight.answer.trim() && !inflight.error && !inflight.aborted) {
+			inflight.aborted = true;
+		}
+
+		const exchanges = current.exchanges.filter((e) => e.answer.trim() || e.error || e.aborted);
 		if (exchanges.length > 0) {
 			pi.appendEntry<BtwEntryData>(ENTRY_TYPE, { model: current.model, exchanges });
 		}
@@ -452,10 +548,18 @@ export default function btwExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	/** Build the side session once, seeded with the main transcript. */
-	const ensureSideSession = async (ctx: ExtensionCommandContext): Promise<AgentSession | undefined> => {
+	/**
+	 * Build the side session once, seeded with the main transcript.
+	 *
+	 * Returns `undefined` only when there is no usable model; a failure to read the main
+	 * transcript is reported and the question still runs, just without that context.
+	 */
+	const ensureSideSession = async (
+		ctx: ExtensionCommandContext,
+		resolution: ModelResolution,
+	): Promise<AgentSession | undefined> => {
 		if (sideSession) return sideSession;
-		const model = ctx.model;
+		const model = resolution.configured ? resolution.model : ctx.model;
 		if (!model) {
 			notify(ctx, "No model selected. Pick one with /model first.", "error");
 			return undefined;
@@ -467,11 +571,17 @@ export default function btwExtension(pi: ExtensionAPI) {
 		// Seed the journal, not agent state: createAgentSession restores messages from a
 		// non-empty session manager itself, and compaction rebuilds re-read the journal.
 		const sessionManager = SessionManager.inMemory(ctx.cwd);
-		for (const message of seedMessages(ctx)) sessionManager.appendMessage(message);
+		const seed = seedMessages(ctx);
+		for (const message of seed.messages) sessionManager.appendMessage(message);
+		// A silent empty seed looks identical to "the side agent forgot everything", so say so.
+		if (seed.failure) {
+			notify(ctx, `/btw is running without the session transcript: ${seed.failure}`, "warning");
+		}
 
 		const created = await createAgentSession({
 			model,
-			thinkingLevel: ctx.thinkingLevel ?? "medium",
+			thinkingLevel:
+				resolution.configured && resolution.thinking ? resolution.thinking : (ctx.thinkingLevel ?? "medium"),
 			tools: SIDE_TOOLS,
 			sessionManager,
 			resourceLoader,
@@ -484,8 +594,12 @@ export default function btwExtension(pi: ExtensionAPI) {
 	};
 
 	/** Ask one question in the side session and stream its answer into `exchange`. */
-	const ask = async (ctx: ExtensionCommandContext, exchange: Exchange): Promise<void> => {
-		const session = await ensureSideSession(ctx);
+	const ask = async (
+		ctx: ExtensionCommandContext,
+		exchange: Exchange,
+		resolution: ModelResolution,
+	): Promise<void> => {
+		const session = await ensureSideSession(ctx, resolution);
 		if (!session) return;
 
 		if (!sideSubscribed) {
@@ -506,21 +620,41 @@ export default function btwExtension(pi: ExtensionAPI) {
 			sideSubscribed = true;
 		}
 
-		// Keep the side session on the main session's model unless it is already there.
-		const target = ctx.model;
+		// A pinned model is never re-synced to the main session; an unpinned one follows it.
+		const target = resolution.configured ? resolution.model : ctx.model;
 		try {
 			if (target && (session.model?.provider !== target.provider || session.model?.id !== target.id)) {
 				await session.setModel(target);
 			}
-			if (ctx.thinkingLevel) session.setThinkingLevel(ctx.thinkingLevel);
+			session.setThinkingLevel(
+				resolution.configured && resolution.thinking ? resolution.thinking : (ctx.thinkingLevel ?? "medium"),
+			);
 		} catch {
 			// Keep whatever the side session already uses.
 		}
 
-		await session.prompt(exchange.question);
+		try {
+			await session.prompt(exchange.question);
+		} catch (error) {
+			exchange.toolName = null;
+			exchange.error = errorMessage(error);
+			return;
+		}
 
 		exchange.toolName = null;
-		if (!exchange.answer.trim() && !exchange.error) exchange.error = "The side agent returned an empty answer.";
+
+		// `prompt()` resolves normally even when the run was aborted, so read the outcome
+		// from the last assistant message instead of guessing from an empty answer.
+		const last = [...session.messages].reverse().find((message) => message.role === "assistant");
+		if (last && last.role === "assistant" && last.stopReason === "aborted") {
+			exchange.aborted = true;
+		} else if (last && last.role === "assistant" && last.stopReason === "error") {
+			exchange.error = last.errorMessage ?? "The side agent returned an error.";
+		}
+
+		if (!exchange.answer.trim() && !exchange.error && !exchange.aborted) {
+			exchange.error = "The side agent returned an empty answer.";
+		}
 		exchange.answer = stripToolCallText(exchange.answer);
 	};
 
@@ -621,7 +755,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 
 		// Snapshot before the switch: everything here dies with the old runtime.
 		const originalId = ctx.sessionManager.getSessionId();
-		const exchanges = current.exchanges.filter((e) => e.answer.trim() || e.error);
+		const exchanges = current.exchanges.filter((e) => e.answer.trim() || e.error || e.aborted);
 		const modelLabel = current.model;
 		const question = shown.question;
 		const answer = shown.answer;
@@ -686,7 +820,17 @@ export default function btwExtension(pi: ExtensionAPI) {
 
 	/** Ask a side question. Never forks, never switches session, never touches the main run. */
 	const askSide = async (ctx: ExtensionCommandContext, question: string): Promise<void> => {
-		const model = ctx.model;
+		// Re-read btw.json on every ask so edits apply without a restart. A broken config is
+		// reported and the question is dropped; it never silently falls back to another model.
+		let resolution: ModelResolution;
+		try {
+			resolution = readModelResolution(ctx);
+		} catch (error) {
+			notify(ctx, errorMessage(error), "error");
+			return;
+		}
+
+		const model = resolution.configured ? resolution.model : ctx.model;
 		if (!model) {
 			notify(ctx, "No model selected. Pick one with /model first.", "error");
 			return;
@@ -698,10 +842,11 @@ export default function btwExtension(pi: ExtensionAPI) {
 		// Reuse an open panel so follow-ups continue the same side thread.
 		if (panel) {
 			panel.exchanges.push(exchange);
+			capHistory(panel.exchanges);
 			panel.busy.value = true;
 			panel.component.touch();
 			try {
-				await ask(ctx, exchange);
+				await ask(ctx, exchange, resolution);
 			} finally {
 				panel && (panel.busy.value = false);
 				panel?.component.touch();
@@ -726,7 +871,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 		panel.unsubscribe = attachKeys(ctx);
 
 		try {
-			await ask(ctx, exchange);
+			await ask(ctx, exchange, resolution);
 		} finally {
 			if (panel?.component === component) {
 				busy.value = false;

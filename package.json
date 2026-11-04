@@ -1,7 +1,7 @@
 {
   "name": "pi-btw-quiet",
-  "version": "0.2.0",
-  "description": "Ask a side question in Pi without disturbing the running agent. The side agent can read and search your repo, and the panel never takes your keyboard.",
+  "version": "0.3.0",
+  "description": "Ask a side question in Pi without disturbing the running agent. A read-only side agent that can inspect your repo, in a panel that never takes your keyboard.",
   "type": "module",
   "license": "MIT",
   "author": "Syauqi-N",
