@@ -157,3 +157,17 @@ independently and differs in the parts listed above.
 ## License
 
 MIT
+
+## Releasing
+
+The version lives in `package.json` and `CHANGELOG.md`. Publishing is driven by a tag:
+
+```bash
+npm version patch --no-git-tag-version   # or minor / major
+git commit -am "chore: release v0.3.1"
+git tag v0.3.1
+git push origin main --tags
+```
+
+`.github/workflows/publish.yml` then typechecks, verifies the tag matches `package.json`, and
+publishes to npm. It needs an npm automation token in the `NPM_TOKEN` repository secret.
