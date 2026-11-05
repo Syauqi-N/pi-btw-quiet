@@ -13,26 +13,31 @@ npm install
 ## Develop
 
 ```bash
-npm run check      # typecheck (tsc --noEmit)
-pi -e ./btw.ts     # load this working copy into Pi
+npm run check                # typecheck (tsc --noEmit)
+pi -e ./extensions/btw.ts    # load this working copy into Pi
 ```
 
-Inside Pi, edit `btw.ts` and run `/reload` to pick up changes without restarting.
+Inside Pi, edit `extensions/btw.ts` and run `/reload` to pick up changes without restarting. Running
+Pi needs Node.js 22.19 or newer.
 
 ## Test by hand
 
 There is no automated test harness yet, so verify the behaviours that matter:
 
 1. **Non-blocking.** Start a long task, run `/btw <question>`, and confirm the main agent keeps
-   producing output and the editor still accepts typing.
+   producing output and the editor still accepts typing. With the main agent idle, a prompt submitted
+   while a side answer streams must start right away.
 2. **No stolen keys.** With a panel open, type a prompt beginning with `f` or `x`. It must land in
    the editor, not trigger fork or clear.
 3. **Abort scope.** Press `esc` while the main agent streams and a panel is open. Only the panel
    should close; the main agent keeps running.
 4. **Branch.** `tab` then `f` should move you into a new session named `btw:<origin-id> · <question>`,
-   with the side answer visible but not in model context. `/btw` returns you to the original.
+   with the side answer in the conversation and in model context. `/btw` returns you to the original,
+   with its transcript intact.
 5. **No context pollution.** After a side question, the next main turn must not contain the side
    question text.
+6. **Fresh transcript.** Close the panel, let the main agent finish another turn, and ask again. The
+   side agent must know about that turn.
 
 ## Guidelines
 

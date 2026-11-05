@@ -9,7 +9,7 @@
 ## How I verified it
 
 - [ ] `npm run check` passes
-- [ ] Loaded with `pi -e ./btw.ts` and exercised the change by hand
+- [ ] Loaded with `pi -e ./extensions/btw.ts` and exercised the change by hand
 - [ ] The main agent still streams while a side question is open
 - [ ] Typing a normal prompt is not intercepted by panel keys
 - [ ] Side answers still do not enter model context
