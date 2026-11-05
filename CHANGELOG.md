@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Requires Node.js 22.19 or newer, matching Pi 1.4.
+- Closing the panel now ends its side thread. The next `/btw` starts from the current transcript.
+
+### Fixed
+
+- A prompt submitted while a side answer streamed was held until that answer finished when the main
+  agent was idle. It now starts right away; follow-up `/btw` questions still run one at a time.
+- `/btw` inside a branch opened an empty session and left a stray file in the project directory. It
+  now returns to the session the branch came from.
+- The side agent no longer answers from an old copy of the transcript after the panel was closed.
+- Models from providers registered by another extension failed with `No API key found`.
+- A failure while creating the side session is now shown in the panel.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added

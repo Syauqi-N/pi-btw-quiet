@@ -16,7 +16,7 @@
  *
  * Usage:
  *   /btw <question>     ask (works while the main agent is streaming)
- *   /btw                close the panel
+ *   /btw                close the panel, or inside a btw branch return to the original session
  *   ctrl+shift+b / f2   close the panel
  *
  * Panel keys, only while the editor is empty so typing is never stolen:
@@ -28,7 +28,7 @@
  *   esc                   leave key mode, then close
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
@@ -40,6 +40,7 @@ import {
 	DefaultResourceLoader,
 	getAgentDir,
 	getMarkdownTheme,
+	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 	type AgentSession,
@@ -444,9 +445,18 @@ class BtwPanel implements Component {
 /* -------------------------------------------------------------------------- */
 
 export default function btwExtension(pi: ExtensionAPI) {
-	/** One lazily created side session per Pi session; in memory only. */
+	/** One lazily created side session per open panel; in memory only. */
 	let sideSession: AgentSession | undefined;
 	let sideSubscribed = false;
+	/** Bumped whenever the side session is dropped, so a build still in flight knows it is stale. */
+	let sideGeneration = 0;
+	/**
+	 * Side questions run one at a time. The `/btw` handler must not wait for them: Pi holds the
+	 * user's next prompt until a command handler returns.
+	 */
+	let sideQueue: Promise<void> = Promise.resolve();
+	/** Bumped on session teardown, so a queued question never runs against a stale context. */
+	let sessionEpoch = 0;
 	/** Set while a side session is reused across questions, so history keeps flowing. */
 	let panel:
 		| {
@@ -475,6 +485,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 		}
 		sideSession = undefined;
 		sideSubscribed = false;
+		sideGeneration++;
 	};
 
 	const closePanel = (): boolean => {
@@ -485,8 +496,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 		current.unsubscribe?.();
 		current.ctx.ui.setWidget(WIDGET_KEY, undefined);
 		current.ctx.ui.setWorkingMessage();
-		// Stop whatever the side session is doing; the main agent is unaffected.
-		void sideSession?.abort();
+		// Stop whatever the side session is doing; the main agent is unaffected. Dropping it also
+		// means the next panel is seeded from the transcript as it is by then.
+		disposeSide();
 
 		// Closing mid-answer stops the side agent, so record that exchange as stopped. The
 		// in-flight `ask()` cannot do it: the panel is already gone by the time it resolves.
@@ -503,6 +515,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 	};
 
 	pi.on("session_shutdown", () => {
+		sessionEpoch++;
 		panel?.unsubscribe?.();
 		panel = undefined;
 		disposeSide();
@@ -565,6 +578,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 			return undefined;
 		}
 
+		const generation = sideGeneration;
 		const resourceLoader = createSideResourceLoader(ctx);
 		await resourceLoader.reload();
 
@@ -578,7 +592,22 @@ export default function btwExtension(pi: ExtensionAPI) {
 			notify(ctx, `/btw is running without the session transcript: ${seed.failure}`, "warning");
 		}
 
+		// The side session loads no extensions, so its runtime would not know about providers they
+		// registered. Mirror those, or a model from such a provider fails with "No API key found".
+		const agentDir = getAgentDir();
+		const modelRuntime = await ModelRuntime.create({
+			authPath: join(agentDir, "auth.json"),
+			modelsPath: join(agentDir, "models.json"),
+		});
+		for (const id of ctx.modelRegistry.getRegisteredProviderIds()) {
+			const native = ctx.modelRegistry.getRegisteredNativeProvider(id);
+			const config = ctx.modelRegistry.getRegisteredProviderConfig(id);
+			if (native) modelRuntime.registerNativeProvider(native);
+			else if (config) modelRuntime.registerProvider(id, config);
+		}
+
 		const created = await createAgentSession({
+			modelRuntime,
 			model,
 			thinkingLevel:
 				resolution.configured && resolution.thinking ? resolution.thinking : (ctx.thinkingLevel ?? "medium"),
@@ -588,6 +617,12 @@ export default function btwExtension(pi: ExtensionAPI) {
 			// In-memory settings so the side session never touches the user's settings.json.
 			settingsManager: SettingsManager.inMemory(),
 		});
+
+		// The panel closed or the session changed while this was being built.
+		if (generation !== sideGeneration) {
+			created.session.dispose();
+			return undefined;
+		}
 
 		sideSession = created.session;
 		return sideSession;
@@ -599,7 +634,13 @@ export default function btwExtension(pi: ExtensionAPI) {
 		exchange: Exchange,
 		resolution: ModelResolution,
 	): Promise<void> => {
-		const session = await ensureSideSession(ctx, resolution);
+		let session: AgentSession | undefined;
+		try {
+			session = await ensureSideSession(ctx, resolution);
+		} catch (error) {
+			exchange.error = errorMessage(error);
+			return;
+		}
 		if (!session) return;
 
 		if (!sideSubscribed) {
@@ -632,6 +673,9 @@ export default function btwExtension(pi: ExtensionAPI) {
 		} catch {
 			// Keep whatever the side session already uses.
 		}
+
+		// The panel closed during the model switch above.
+		if (session !== sideSession) return;
 
 		try {
 			await session.prompt(exchange.question);
@@ -778,10 +822,11 @@ export default function btwExtension(pi: ExtensionAPI) {
 			current.unsubscribe?.();
 			current.ctx.ui.setWidget(WIDGET_KEY, undefined);
 			current.ctx.ui.setWorkingMessage();
+			disposeSide();
 
 			await ctx.switchSession(forkedPath, {
 				withSession: async (fresh) => {
-					fresh.ui.notify(`Branched to a new session. Use /resume ${originalId} to go back.`, "info");
+					fresh.ui.notify("Branched to a new session. Run /btw to go back.", "info");
 				},
 			});
 		} catch (error) {
@@ -789,21 +834,20 @@ export default function btwExtension(pi: ExtensionAPI) {
 		}
 	};
 
-	/** Session id recorded in a btw branch name, or undefined outside a branch. */
-	const branchOrigin = (name: string | undefined): string | undefined => {
-		if (!name?.startsWith(BRANCH_PREFIX)) return undefined;
-		const id = name.slice(BRANCH_PREFIX.length).trim().split(" · ")[0]?.trim();
-		return id || undefined;
-	};
-
 	/** Inside a btw branch: jump back to the session it was branched from. */
 	const returnToOrigin = async (ctx: ExtensionCommandContext): Promise<boolean> => {
-		const originId = branchOrigin(ctx.sessionManager.getSessionName());
-		if (!originId) return false;
+		if (!ctx.sessionManager.getSessionName()?.startsWith(BRANCH_PREFIX)) return false;
+		const originPath = ctx.sessionManager.getHeader()?.parentSession;
+		if (!originPath) return false;
+		// Opening a missing path would silently start a new empty session there.
+		if (!existsSync(originPath)) {
+			notify(ctx, "The original session file no longer exists. Use /resume.", "warning");
+			return true;
+		}
 
-		notify(ctx, `Returning to ${originId}…`);
+		notify(ctx, "Returning to the original session…");
 		try {
-			await ctx.switchSession(originId, {
+			await ctx.switchSession(originPath, {
 				withSession: async (fresh) => {
 					fresh.ui.notify("Back in the original session", "info");
 				},
@@ -885,7 +929,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 		handler: async (args, ctx: ExtensionCommandContext) => {
 			const question = args.trim();
 			if (question) {
-				await askSide(ctx, question);
+				const epoch = sessionEpoch;
+				sideQueue = sideQueue
+					.then(() => (epoch === sessionEpoch ? askSide(ctx, question) : undefined))
+					.catch((error) => notify(ctx, errorMessage(error), "error"));
 				return;
 			}
 			if (closePanel()) return;
